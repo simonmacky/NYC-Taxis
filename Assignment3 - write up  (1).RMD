@@ -1,0 +1,198 @@
+---
+title: "Assignment 3 - Predicting NYC taxi tips"
+author: "Simon Swinton"
+date: "16 May 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("//files.auckland.ac.nz/MyHome/Documents/Stats 763/Assignment 3")
+library(tidyverse)
+library(DBI)
+library(biglm)
+library(leaflet)
+library(lubridate)
+library(leaps)
+library(httr)
+library(rgdal)
+library(Matrix)
+library(lmvar)
+tripdata1 <- read.csv(file = "yellow_tripdata_2016-01.csv", header = TRUE)
+tripdata2 <- read.csv(file = "yellow_tripdata_2016-02.csv", header = TRUE)
+
+explore <- tripdata1[sample(1:nrow(tripdata1), nrow(tripdata1) / 10, replace = TRUE),]
+sample
+```
+
+# Assignment 3 - Predicting NYC taxi tips
+
+The aim of this assignment is to explore and predict the tips recieved by cab drivers in New Zork city. This information could be useful in shaping how the drivers tailer their work to maximise their tips. As the tips were only recorded on credit card transactions, we will just be looking at the rides that were paid by credit card.
+
+The first part of the assignment, is split between exploring and clearing the data.
+Secondly there will be model selection for the standard taxi rates, and lastly predictions will be made and compared to the dataset of Feburary.
+
+As all trips are not equal, I will be splitting the trips up and analysing them separately depending on the kind of trip they are. By this I mean I will be looking at standard taxi trips separately to the airport fares.
+
+For the exploration of the data, we wil use a smaller dataset with only 10% of the data.
+
+
+##Time
+ I have split time into a binary variable of work hours or not. Thi covers the 8 - 6 work day for monday to friday. 
+ This is a crude way of differentiating on the different ways people use taxis.
+ Additionally I have removed all of the trips that have either a negative duration or a duration over roughly 2 hours. This was done to address the issue of trips being included that were inter city, and not representative of the typical taxi trip we are interested in.
+ 
+```{r time}
+plot()
+tripdata1$hour <- hour(tripdata1$tpep_pickup_datetime)
+tripdata1$day <- wday(tripdata1$tpep_pickup_datetime, label = TRUE)
+tripdata1$workhours <- ifelse(tripdata1$day > 1 & tripdata1$day < 7 & tripdata1$hour > 8 & tripdata1$hour < 18, 1, 0)
+
+#Duration
+explore$duration <- as.numeric(explore$tpep_dropoff_datetime) - as.numeric(explore$tpep_pickup_datetime)
+duration <- density(explore$duration)
+plot(duration)
+```
+
+## Speed
+From the distance and duration we have included a speed variable.
+I have decided to limit the data to above 0mph, and below 60mph. There are a fair amount of rides above this. While some could be plausable, others are surely mistaken entries. Considering the maximum speed limit in New York State is 55mph, I believe this cut off would get most of the genuine entries. Additionally it raises the interesting issue of whether drivers should be rewarded for driving in a way that would endanger others. 
+```{r}
+#Speed
+tripdata1$durationhr <- tripdata1$duration / 3600
+tripdata1$speedmph <- tripdata1$trip_distance / tripdata1$durationhr
+
+plot(explore$speedmph, main =  "Average trip speed in Mph")
+badspeed <- (which(tripdata1$speedmph > 75 |tripdata1$speedmph <= 0 ))
+tripdata1 <- tripdata1[-badspeed,]
+
+plot(explore$speedmph, main =  "Average trip speed in Mph")
+```
+
+#Location, location, location
+For location I have broken up the coordinates into both boroughs and neighborhoods.
+
+```{r}
+#### Boroughs ####
+points1 <- data.frame(lat=tripdata1$pickup_latitude, lng=tripdata1$pickup_longitude)
+r <- GET('http://data.beta.nyc//dataset/0ff93d2d-90ba-457c-9f7e-39e47bf2ac5f/resource/35dd04fb-81b3-479b-a074-a27a37888ce7/download/d085e2f8d0b54d4590b1e7d1f35594c1pediacitiesnycneighborhoods.geojson')
+nyc_neighborhoods <- readOGR(content(r,'text'), 'OGRGeoJSON', verbose = F)
+points_spdf <- points1
+coordinates(points_spdf) <- ~lng + lat
+proj4string(points_spdf) <- proj4string(nyc_neighborhoods)
+matches <- over(points_spdf, nyc_neighborhoods)
+tripdata1$borough <- as.factor(matches[,3])
+tripdata1$neighborhood <- as.factor(matches[,1])
+```
+
+
+# Response variable
+Before looking at models, we want to be predicting the the erlative percentage of tips, not the actual amaount. For this reason I have recoded another variable for this
+# Model Fitting
+
+To start off we will create a model with all the variables that I think could affect peoples tipping behaviour. Tipping behaviour will be looked at through the relative percentage of tip amount. Due to the size of the dataset, I will use the BigLM package to feed data in 2,500,000 rows at a time.
+
+This creates the general model of fit1. Can we improve on this?
+
+```{r biglm, echo=FALSE}
+#### Getting tips as a percentage of total amount ####
+tripdata1$tipperc <- 100/tripdata1$total_amount * tripdata1$tip_amount
+fit1 <-biglm(tipperc ~ VendorID  + speedmph + 
+              passenger_count +(hour) + as.factor(day) + total_amount + 
+               as.factor(store_and_fwd_flag) + trip_distance + as.factor(borough)
+             , data = tripdata1tips[1:2500000,])
+fit1 <- update(fit1, tripdata1tips[2500001:5000000,])
+fit1 <- update(fit1, tripdata1tips[5000001:nrow(tripdata1tips),])
+
+summary(fit1)
+```
+
+# Testing different models
+
+```{r model testing}
+
+
+```
+
+
+
+```{r MSPE}
+
+
+```
+
+
+
+```{r cleaning the test set, include=FALSE}
+##### Duration #######
+tripdata2$duration <- as.numeric(tripdata2$tpep_dropoff_datetime) - as.numeric(tripdata2$tpep_pickup_datetime)
+
+##### Credit card data only #####
+tripdata2 <- tripdata2[which(tripdata1$payment_type == 1),]
+
+##### standard rate #####
+tripdata2 <- tripdata2[which(tripdata1$RatecodeID == 1),]
+
+#### Getting tips as a percentage of total amount ####
+tripdata2$tipperc <- 100/tripdata2$total_amount * tripdata2$tip_amount
+
+#### Getting date and Time separately ####
+tripdata2$hour <- hour(tripdata2$tpep_pickup_datetime)
+tripdata2$day <- wday(tripdata2$tpep_pickup_datetime, label = TRUE)
+
+### Exploring the variables
+### Time - Needs to be greater than zero
+badtime <-  which(tripdata2$duration > 10000 | tripdata2$duration < 60)
+length(badtime)
+tripdata2 <- tripdata2[-badtime,]
+
+### Passenger count 
+badcount <- (which(tripdata2$passenger_count < 1))
+tripdata2 <- tripdata2[-badcount,]
+
+### Trip distance
+baddist <- (which(tripdata1$trip_distance > 50))
+tripdata1 <- tripdata1[-baddist,]
+#plot(tripdata1$trip_distance, main = "Trip Distance")
+### Payment type == 2
+### Fare amount > 0
+#plot(tripdata1$fare_amount, main = "fare amount")
+badfare <- (which(tripdata1$fare_amount > 300 |tripdata1$fare_amount <= 0 ))
+tripdata1 <- tripdata1[-badfare,]
+#plot(tripdata1$fare_amount, main = "fare amount")
+### Tip amount is.na removed
+#plot(tripdata1$tip_amount, main = "tip amount")
+badtip <- length(which(tripdata1$tip_amount== NA |tripdata1$tip_amount < 0))
+tripdata1 <- tripdata1[-badtip,]
+#plot(tripdata1$tipperc, main = "tip amount")
+### speed 
+tripdata1$durationhr <- tripdata1$duration / 3600
+tripdata1$speedmph <- tripdata1$trip_distance / tripdata1$durationhr
+
+#plot(tripdata1$speedmph, main = "Average trip speed in Mph")
+
+#plot(tripdata1$speedmph, main =  "Average trip speed in Mph")
+badspeed <- (which(tripdata1$speedmph > 75 |tripdata1$speedmph <= 0 ))
+tripdata1 <- tripdata1[-badspeed,]
+#plot(tripdata1$speedmph, main =  "Average trip speed in Mph")
+#boxplot(tripdata1$speedmph, main = "Average trip speed in Mph")
+
+library(httr)
+library(rgdal)
+library(Matrix)
+library(lmvar)
+#### Boroughs ####
+points1 <- data.frame(lat=tripdata1$pickup_latitude, lng=tripdata1$pickup_longitude)
+r <- GET('http://data.beta.nyc//dataset/0ff93d2d-90ba-457c-9f7e-39e47bf2ac5f/resource/35dd04fb-81b3-479b-a074-a27a37888ce7/download/d085e2f8d0b54d4590b1e7d1f35594c1pediacitiesnycneighborhoods.geojson')
+nyc_neighborhoods <- readOGR(content(r,'text'), 'OGRGeoJSON', verbose = F)
+points_spdf <- points1
+coordinates(points_spdf) <- ~lng + lat
+proj4string(points_spdf) <- proj4string(nyc_neighborhoods)
+matches <- over(points_spdf, nyc_neighborhoods)
+tripdata1$borough <- as.factor(matches[,3])
+tripdata1$neighborhood <- as.factor(matches[,1])
+```
+
+
+
+#Prediction error
